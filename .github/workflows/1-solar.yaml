@@ -1,1 +1,58 @@
+name: solar system 
+on: 
+  workflow_dispatch:
+  push: 
+    branches: 
+      - main
+      - feature/*
 
+env: 
+  MONGO_URI: 'mongodb+srv://supercluster.d83jj.mongodb.net/superData'
+  MONGO_USERNAME: ${{ vars.MONGO_USERNAME }}
+  MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
+
+jobs: 
+  unit-testing: 
+    strategy: 
+      matrix:
+        nodejsversion: [18, 19, 20]
+        os: [ubuntu-latest, macos-latest ]
+        exclude: 
+          - nodejsversion: 18
+            os: macos-latest
+    name: nodejs unit testing
+    runs-on: ${{ matrix.os }}
+    steps: 
+      - name: checkout repo 
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4 
+        with:
+          node-version: ${{ matrix.nodejsversion }}
+      - name: install dependencies
+        run: npm install 
+      - run: npm test
+      - name: Saving the test results
+        uses: actions/upload-artifact@v4
+        with: 
+          name: numberwise-${{ matrix.nodejsversion }}-on-${{ matrix.os }}
+          path: test-results.xml
+
+  code-coverage: 
+    runs-on: ubuntu-latest
+    steps: 
+      - name: checkout repo 
+        uses: actions/checkout@v4
+      - uses: actions/setup-node@v4 
+        with:
+          node-version: 18
+      - name: install dependencies
+        run: npm install 
+      - name: Run code coverage
+        continue-on-error: true
+        run: npm run coverage
+      - name: saving coverage artifact 
+        uses: actions/upload-artifact@v4
+        with: 
+          name: Coverage results
+          path: coverage
+          retention-days: 2
