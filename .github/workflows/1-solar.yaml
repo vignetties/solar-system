@@ -8,8 +8,8 @@ on:
 
 env: 
   MONGO_URI: 'mongodb+srv://supercluster.d83jj.mongodb.net/superData'
-  MONGO_USERNAME: 'superuser'
-  MONGO_PASSWORD: 'SuperPassword'
+  MONGO_USERNAME: ${{ vars.MONGO_USERNAME }}
+  MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
 
 jobs: 
   unit-testing: 
@@ -140,3 +140,76 @@ jobs:
           context: .
           tags:  ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
           push: true
+
+
+  dev_deploy: 
+    needs: docker
+    outputs: 
+      PORT: ${{ steps.myservice.outputs.PORT}}
+    environment: 
+      name: development
+      url: http://3.136.148.224:${{ steps.myservice.outputs.PORT}}
+    runs-on: ubuntu-latest
+    steps: 
+      - name: checkout repo 
+        uses: actions/checkout@v4
+
+      - name: using kubectl action 
+        uses:  azure/setup-kubectl@v4
+        with:
+          version: 'v1.30.0'
+
+      - name: login using kubeconfieg files 
+        uses: azure/k8s-set-context@v4
+        with:
+          method: kubeconfig
+          kubeconfig: "${{ secrets.KUBECONFIG }}"
+          context: kubernetes-admin@kubernetes
+
+      - name: runnnig kubectl commands
+        run: |
+              kubectl version 
+              kubectl get nodes  
+
+      - name: replaceing some token 
+        uses: cschleiden/replace-tokens@v1
+        with: 
+          tokenPrefix: '_{_'
+          tokenSuffix: '_}_'
+          files: '["kubernetes/development/*.yaml"]'
+        env:
+          NAMESPACE: ${{ vars.NAMESPACE }}
+          REPLICAS: ${{ vars.REPLICAS }}
+          IMAGE: ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha}}
+
+      - name: printing yaml 
+        run: | 
+               cat kubernetes/development/*.yaml
+
+      - name: Creating A secret becuase pod needs it 
+        continue-on-error: true
+        run: | 
+          kubectl -n ${{ vars.NAMESPACE }} create secret generic mongo-db-creds \
+          --from-literal=MONGO_URI=${{ env.MONGO_URI }} \
+          --from-literal=MONGO_USERNAME=${{ vars.MONGO_USERNAME }} \
+          --from-literal=MONGO_PASSWORD=${{ secrets.MONGO_PASSWORD }} 
+
+      - name: Deploying app 
+        run: |
+          kubectl apply -f kubernetes/development/
+    
+      - name: retriving the url of service with nodeport
+        id: myservice
+        run: | 
+          echo "PORT=$(kubectl get svc  solar-system -n development  -o jsonpath='{.spec.ports[0].nodePort}')"  >> $GITHUB_OUTPUT
+
+  integration-testing:
+    name: Dev Integration Testing
+    needs: dev_deploy
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test URL
+        env:
+          MAYANK: ${{ needs.dev_deploy.outputs.PORT }}
+        run: | 
+          curl  http://3.136.148.224:$MAYANK/live  -s -k  | grep -i live 
