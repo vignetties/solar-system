@@ -1,4 +1,4 @@
-name: solar system
+name: solar system 
 on: 
   workflow_dispatch:
   push: 
@@ -8,19 +8,30 @@ on:
 
 env: 
   MONGO_URI: 'mongodb+srv://supercluster.d83jj.mongodb.net/superData'
-  MONGO_USERNAME: 'superuser'
-  MONGO_PASSWORD: 'SuperPassword'
+  MONGO_USERNAME: ${{ vars.MONGO_USERNAME }}
+  MONGO_PASSWORD: ${{ secrets.MONGO_PASSWORD }}
 
 jobs: 
   unit-testing: 
     strategy: 
       matrix:
         nodejsversion: [18, 19, 20]
-        os: [ubuntu-latest, macos-latest ]
-        exclude: 
-          - nodejsversion: 18
-            os: macos-latest
-    name: nodejs unit testing
+        os: [ubuntu-latest ]
+        # exclude: 
+        #   - nodejsversion: 18
+        #     os: macos-latest
+
+    name: unit-testing
+    services: 
+      mongo-db: 
+        image: mdhack/mongo-db:non-prod
+        ports: 
+          - 27017:27017
+    env: 
+      MONGO_URI: 'mongodb://localhost:27017/superData'
+      MONGO_USERNAME:  non-prod-user
+      MONGO_PASSWORD:  non-prod-password
+    #name: nodejs unit testing
     runs-on: ${{ matrix.os }}
     steps: 
       - name: checkout repo 
@@ -28,16 +39,42 @@ jobs:
       - uses: actions/setup-node@v4 
         with:
           node-version: ${{ matrix.nodejsversion }}
+
+      - name: Saving Cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+
+
       - name: install dependencies
         run: npm install 
-      - run: npm test
+         
+      - name: testing npm 
+        run: npm test
+         
       - name: Saving the test results
+        if: always()
         uses: actions/upload-artifact@v4
         with: 
-          name: numberwise-${{ matrix.nodejsversion }}-on-${{ matrix.os }}-${{ github.run_number }}
+          name: numberwise-${{ matrix.nodejsversion }}-onn-${{ matrix.os }}
           path: test-results.xml
 
+
   code-coverage: 
+    name: job container
+    container: 
+      image: node:18
+    services: 
+      mongo-db: 
+        image: mdhack/mongo-db:non-prod
+
+
+    env: 
+       MONGO_URI: 'mongodb://localhost:27017/superData'
+       MONGO_USERNAME:  non-prod-username
+       MONGO_PASSWORD:  non-prod-password
+
     runs-on: ubuntu-latest
     steps: 
       - name: checkout repo 
@@ -45,6 +82,13 @@ jobs:
       - uses: actions/setup-node@v4 
         with:
           node-version: 18
+
+      - name: Saving Cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-${{ hashFiles('package-lock.json') }}
+
       - name: install dependencies
         run: npm install 
       - name: Run code coverage
@@ -56,3 +100,43 @@ jobs:
           name: Coverage results
           path: coverage
           retention-days: 2
+
+
+  docker: 
+    name: containerization 
+    needs: [unit-testing, code-coverage]
+    runs-on: ubuntu-latest
+    steps: 
+      - name: checking out
+        uses: actions/checkout@v4
+      - name: docker login 
+        uses: docker/login-action@v3
+        with:
+          username: ${{ vars.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+        
+      - name: Build and Push 
+        uses: docker/build-push-action@v6
+        with: 
+          context: .
+          tags:  ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
+          push: false
+
+      - name: Testing Docker image
+        run: |  
+              docker images
+              docker run  --name mayank-solar-system  -d  \
+              -p 3000:3000 \
+              -e MONGO_URI=$MONGO_URI \
+              -e MONGO_USERNAME=$MONGO_USERNAME \
+              -e MONGO_PASSWORD=$MONGO_PASSWORD \
+              ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
+
+              wget  -q -O - 127.0.0.1:3000/live  | grep -i live  
+
+      - name: Pushing image
+        uses: docker/build-push-action@v6
+        with: 
+          context: .
+          tags:  ${{ vars.DOCKERHUB_USERNAME }}/solar-system:${{ github.sha }}
+          push: true
