@@ -34,7 +34,7 @@ jobs:
       - name: Saving the test results
         uses: actions/upload-artifact@v4
         with: 
-          name: numberwise-${{ matrix.nodejsversion }}-on-${{ matrix.os }}
+          name: numberwise-${{ matrix.nodejsversion }}-on-${{ matrix.os }}-${{ github.run_number }}
           path: test-results.xml
 
   code-coverage: 
